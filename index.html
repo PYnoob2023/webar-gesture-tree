@@ -2,13 +2,16 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>WebAR 赛博圣诞树 - 终极版</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#061511">
+    <meta name="description" content="用手势点亮一棵粒子圣诞树，张手化作星球，握拳让星光重新相聚。">
+    <title>星光圣诞树 · WebAR</title>
+    <script id="hands-lib" defer src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
+    <script id="camera-lib" defer src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        html { height: 100%; background: #061511; }
+        body { min-height: 100vh; min-height: 100dvh; background: radial-gradient(ellipse at 50% 55%, #10372b 0%, #061511 48%, #030907 100%); color: #f7f2df; overflow: hidden; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; }
 
         /* 视频层：镜像 */
         #input-video {
@@ -18,7 +21,10 @@
             transform: scaleX(-1);
             z-index: 0;
             filter: brightness(0.7); /* 稍微压暗背景，突出特效 */
+            opacity: 0;
+            transition: opacity 0.8s;
         }
+        body.camera-on #input-video { opacity: 1; }
 
         /* 画布层 */
         #output-canvas {
@@ -30,21 +36,26 @@
         /* UI */
         #ui-layer {
             position: absolute;
-            bottom: 20px;
+            bottom: max(22px, env(safe-area-inset-bottom));
             width: 100%;
             text-align: center;
             z-index: 10;
             pointer-events: none;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            padding: 0 16px;
         }
 
         .hud-text {
-            color: rgba(0, 255, 255, 0.9);
-            font-size: 14px;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 5px 12px;
-            border-radius: 15px;
-            border: 1px solid rgba(0, 255, 255, 0.3);
-            margin: 0 4px;
+            color: #d6e9df;
+            font-size: 12px;
+            background: rgba(5, 22, 17, 0.72);
+            padding: 9px 13px;
+            border-radius: 999px;
+            border: 1px solid rgba(222, 206, 151, 0.2);
+            margin: 0;
             display: inline-block;
             backdrop-filter: blur(4px);
         }
@@ -53,18 +64,53 @@
             position: absolute;
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            color: cyan;
-            font-size: 24px;
+            width: min(370px, calc(100vw - 40px));
+            padding: 28px;
+            color: #eceddd;
+            font-size: 14px;
+            line-height: 1.8;
+            text-align: center;
+            border: 1px solid #d8c58e40;
+            border-radius: 22px;
+            background: rgba(4, 18, 14, 0.88);
+            backdrop-filter: blur(18px);
             z-index: 20;
-            text-shadow: 0 0 10px cyan;
         }
+        #loading h1 { font-size: 27px; font-weight: 500; letter-spacing: 3px; margin: 5px 0 12px; }
+        #loading .eyebrow { color: #caba88; font-size: 10px; letter-spacing: 4px; }
+        #loading p { color: #aabeb2; margin-bottom: 18px; }
+        button { font: inherit; cursor: pointer; border-radius: 999px; padding: 10px 18px; border: 1px solid #d8c58e55; background: #e3d19b; color: #10241a; transition: background .2s; }
+        button:hover { background: #f3e5b9; }
+        button:disabled { cursor: wait; opacity: .6; }
+        button:focus-visible { outline: 2px solid #fff1be; outline-offset: 4px; }
+        #preview { background: transparent; color: #d3dfd5; margin-left: 6px; }
+        #status { display: block; color: #abbfb2; font-size: 12px; margin-top: 15px; min-height: 1.8em; }
+        #header { position: absolute; top: max(23px, env(safe-area-inset-top)); left: 24px; right: 24px; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        #brand { font-size: 13px; letter-spacing: 2px; color: #eadbb6; }
+        #camera-toggle { padding: 7px 14px; background: #071b15b3; color: #d8e7dc; font-size: 12px; backdrop-filter: blur(12px); }
+        #live-status { position: absolute; top: 70px; left: 20px; right: 20px; text-align: center; color: #a9c5b6; z-index: 10; font-size: 12px; pointer-events: none; }
+        [hidden] { display: none !important; }
+        @media (max-width: 480px) { #header { left: 18px; right: 18px; } .hud-text { font-size: 11px; padding: 7px 10px; } #ui-layer { gap: 6px; } }
+        @media (prefers-reduced-motion: reduce) { button, #input-video { transition: none; } }
     </style>
 </head>
 <body>
     <video id="input-video" playsinline muted></video>
-    <canvas id="output-canvas"></canvas>
+    <canvas id="output-canvas" aria-label="随手势变化的粒子圣诞树"></canvas>
     
-    <div id="loading">✨ 正在装载魔法引擎...</div>
+    <header id="header">
+        <span id="brand">✦ 星光圣诞树</span>
+        <button id="camera-toggle" type="button" hidden>开启手势</button>
+    </header>
+    <div id="live-status" role="status" aria-live="polite"></div>
+    <section id="loading" aria-labelledby="welcome-title">
+        <span class="eyebrow">A LITTLE CHRISTMAS MAGIC</span>
+        <h1 id="welcome-title">把星光捧在手里</h1>
+        <p>张开手，让圣诞树化作星球。<br>轻轻握拳，再把星光聚拢。</p>
+        <button id="start" type="button">开启摄像头</button>
+        <button id="preview" type="button">先看星光</button>
+        <span id="status" role="status" aria-live="polite">摄像头画面仅在本页处理，不会上传。</span>
+    </section>
 
     <div id="ui-layer">
         <div class="hud-text">☝️ 食指：流光魔法</div>
@@ -86,11 +132,31 @@
         const canvas = document.getElementById('output-canvas');
         const ctx = canvas.getContext('2d');
         const loading = document.getElementById('loading');
+        const status = document.getElementById('status');
+        const liveStatus = document.getElementById('live-status');
+        const startButton = document.getElementById('start');
+        const cameraToggle = document.getElementById('camera-toggle');
+        const video = document.getElementById('input-video');
 
         let width, height;
         let particles = [];
         let sparks = [];
         let time = 0;
+        let frameScale = 1;
+        let sceneScale = 1;
+        let previousFrame = 0;
+        let animationId;
+        let camera = null;
+        let hands = null;
+        let starting = false;
+        let cameraOn = false;
+        let cameraAttempt = 0;
+        let lastIndex = null;
+        let candidateShape = null;
+        let candidateFrames = 0;
+        let lastTrackingTime = 0;
+        let tracking = false;
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         
         // 状态
         let targetShape = 'tree'; // tree, sphere
@@ -150,13 +216,13 @@
                 this.hue = 40 + Math.random() * 20; 
             }
             update() {
-                this.x += this.vx;
-                this.y += this.vy;
-                this.vy += CONFIG.gravity; // 重力
-                this.vx *= 0.95; // 空气阻力
-                this.vy *= 0.95;
-                this.life *= CONFIG.sparkLife;
-                this.hue -= 0.5; // 颜色变红
+                this.x += this.vx * frameScale;
+                this.y += this.vy * frameScale;
+                this.vy += CONFIG.gravity * frameScale;
+                this.vx *= Math.pow(0.95, frameScale);
+                this.vy *= Math.pow(0.95, frameScale);
+                this.life *= Math.pow(CONFIG.sparkLife, frameScale);
+                this.hue -= 0.5 * frameScale;
             }
             draw(ctx) {
                 ctx.globalAlpha = this.life;
@@ -169,8 +235,15 @@
 
         // 初始化
         function init() {
-            width = canvas.width = window.innerWidth;
-            height = canvas.height = window.innerHeight;
+            width = window.innerWidth;
+            height = window.innerHeight;
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            canvas.width = Math.round(width * dpr);
+            canvas.height = Math.round(height * dpr);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            // 为窄屏和横屏留出标题与手势提示的位置。
+            sceneScale = Math.min(1, (width - 32) / 710, Math.max(80, height - 185) / 690);
+            lastIndex = null;
             particles = [];
             for (let i = 0; i < CONFIG.particleCount; i++) {
                 particles.push(new Particle(i));
@@ -180,18 +253,22 @@
             star.treeX = 0; star.treeY = -CONFIG.treeHeight/2 - 10; star.treeZ = 0;
             star.size = 12; 
             star.baseColor = '#FFD700';
+            star.sphereX = 0; star.sphereY = -270; star.sphereZ = 0;
             particles.push(star);
         }
 
         // --- 渲染循环 ---
-        function animate() {
+        function animate(timestamp = 0) {
+            frameScale = previousFrame ? Math.min(3, Math.max(0.1, (timestamp - previousFrame) / (1000 / 60))) : 1;
+            previousFrame = timestamp;
+            if (tracking && performance.now() - lastTrackingTime > 800) resetTracking();
             // 使用 source-over 且带一点黑色背景，形成非常短的拖尾效果，如果不想要拖尾改为 clearRect
             ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'; 
             ctx.clearRect(0, 0, width, height);
 
-            time += 0.015;
+            time += 0.015 * frameScale * (reducedMotion ? 0.25 : 1);
             const centerX = width / 2;
-            const centerY = height / 2 + 50;
+            const centerY = height / 2 + 12;
 
             // 1. 处理火花
             ctx.globalCompositeOperation = 'lighter'; // 叠加高亮模式
@@ -204,7 +281,7 @@
 
             // 2. 状态过渡
             const targetVal = (targetShape === 'sphere') ? 1 : 0;
-            transitionVal += (targetVal - transitionVal) * 0.05; // 缓动插值
+            transitionVal += (targetVal - transitionVal) * (1 - Math.pow(0.95, frameScale));
 
             // 3. 绘制 3D 粒子树
             // 自动旋转
@@ -225,13 +302,15 @@
 
                 // 3D 投影
                 const perspective = 800 / (800 - rz); // 简单的透视投影
-                const x2d = centerX + rx * perspective;
-                const y2d = centerY + ry * perspective;
-                const size2d = p.size * perspective;
+                const x2d = centerX + rx * perspective * sceneScale;
+                const y2d = centerY + ry * perspective * sceneScale;
+                const size2d = p.size * perspective * Math.max(0.5, sceneScale);
 
                 // 颜色逻辑
                 let drawColor = p.baseColor;
-                if (colorMode === 'disco') {
+                if (p.size > 8) {
+                    drawColor = '#FFD700';
+                } else if (colorMode === 'disco') {
                     // 迪斯科模式：基于位置和时间生成彩虹色
                     const hue = (time * 100 + p.idx) % 360;
                     drawColor = `hsl(${hue}, 80%, 60%)`;
@@ -262,104 +341,204 @@
             ctx.globalCompositeOperation = 'source-over';
             ctx.shadowBlur = 0;
             
-            // requestAnimationFrame(animate); // 由 Camera loop 驱动，不需要手动调用
+            animationId = requestAnimationFrame(animate);
         }
 
-        // --- 手势处理 ---
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({
-            maxNumHands: 2,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.65,
-            minTrackingConfidence: 0.65
+        // 手势只更新状态；绘制独立运行，摄像头不可用时也能看见星光。
+        function resetTracking() {
+            lastIndex = null;
+            candidateShape = null;
+            candidateFrames = 0;
+            colorMode = 'normal';
+            tracking = false;
+            if (cameraOn) liveStatus.textContent = '把手放进画面，让星光跟随你';
+        }
+
+        function classifyHand(landmarks) {
+            if (!landmarks || landmarks.length < 21 || landmarks.some(p => !p || !Number.isFinite(p.x) || !Number.isFinite(p.y))) return null;
+            const wrist = landmarks[0];
+            const distance = p => Math.hypot(p.x - wrist.x, p.y - wrist.y);
+            const palm = distance(landmarks[5]);
+            if (palm < 0.0001) return null;
+            const index = distance(landmarks[8]) > palm * 1.5;
+            const middle = distance(landmarks[12]) > palm * 1.3;
+            const ring = distance(landmarks[16]) > palm * 1.3;
+            const pinky = distance(landmarks[20]) > palm * 1.2;
+            const thumb = distance(landmarks[4]) > distance(landmarks[3]) * 1.1;
+            if (index && middle && ring && pinky && thumb) return { mode: 'open', index, label: '星球在你掌心' };
+            if (index && middle && !ring && !pinky) return { mode: 'victory', index, label: '霓虹点亮了' };
+            if (!index && !middle && !ring && !pinky) return { mode: 'fist', index, label: '星光重新聚拢' };
+            return { mode: 'point', index, label: '让指尖划过星光' };
+        }
+
+        function videoPoint(point) {
+            // object-fit: cover 会裁掉画面边缘；坐标也按相同裁切和镜像映射。
+            const vw = video.videoWidth || width;
+            const vh = video.videoHeight || height;
+            const scale = Math.max(width / vw, height / vh);
+            return {
+                x: width - (point.x * vw * scale - (vw * scale - width) / 2),
+                y: point.y * vh * scale - (vh * scale - height) / 2
+            };
+        }
+
+        function onHandResults(results) {
+            const landmarks = results.multiHandLandmarks && results.multiHandLandmarks[0];
+            const gesture = classifyHand(landmarks);
+            if (!gesture) { resetTracking(); return; }
+            const now = performance.now();
+            if (now - lastTrackingTime > 350) lastIndex = null;
+            lastTrackingTime = now;
+            tracking = true;
+            if (candidateShape === gesture.mode) candidateFrames++;
+            else { candidateShape = gesture.mode; candidateFrames = 1; }
+            // 连续三帧确认，避免手势边缘的单帧抖动切换形态。
+            if (candidateFrames >= 3) {
+                colorMode = gesture.mode === 'victory' ? 'disco' : 'normal';
+                if (gesture.mode === 'open') targetShape = 'sphere';
+                if (gesture.mode === 'fist') targetShape = 'tree';
+                liveStatus.textContent = gesture.label;
+            }
+            const mapped = videoPoint(landmarks[8]);
+            const ix = mapped.x;
+            const iy = mapped.y;
+            // 先计算位移再更新上一帧，修正原先惯性恒为零的问题。
+            const dx = lastIndex ? Math.max(-60, Math.min(60, ix - lastIndex.x)) : 0;
+            const dy = lastIndex ? Math.max(-60, Math.min(60, iy - lastIndex.y)) : 0;
+            lastIndex = { x: ix, y: iy };
+            if (gesture.index) {
+                const count = reducedMotion ? 1 : Math.min(5, Math.ceil(Math.hypot(dx, dy) / 2) + 1);
+                for (let k = 0; k < count; k++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const vel = Math.random() * 5 + 2;
+                    sparks.push(new Spark(ix, iy, Math.cos(angle) * vel + dx * 0.2, Math.sin(angle) * vel + dy * 0.2));
+                }
+                if (sparks.length > 600) sparks.splice(0, sparks.length - 600);
+            }
+        }
+
+        function showPreview() {
+            loading.hidden = true;
+            cameraToggle.hidden = false;
+            if (!cameraOn && !starting) liveStatus.textContent = '静静看一会儿星光，也很好';
+        }
+
+        function cameraError(error) {
+            const messages = {
+                NotAllowedError: '摄像头未获授权。可在浏览器设置中允许，也可以先看星光。',
+                NotFoundError: '没有找到摄像头，你仍然可以欣赏星光。',
+                NotReadableError: '摄像头可能正被其他应用使用，请关闭后重试。',
+                SecurityError: '请通过 HTTPS 或 localhost 打开，才能使用摄像头。'
+            };
+            return messages[error && error.name] || '手势资源或摄像头未能启动，请检查网络后重试，也可以先看星光。';
+        }
+
+        async function stopCamera() {
+            cameraAttempt++;
+            const previousCamera = camera;
+            const previousHands = hands;
+            camera = hands = null;
+            cameraOn = false;
+            starting = false;
+            document.body.classList.remove('camera-on');
+            resetTracking();
+            // 直接停轨，避免关闭页面后继续占用摄像头。
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            if (previousCamera) { try { await previousCamera.stop(); } catch (_) {} }
+            if (previousHands) { try { await previousHands.close(); } catch (_) {} }
+            startButton.disabled = false;
+            cameraToggle.disabled = false;
+            startButton.textContent = '开启摄像头';
+            cameraToggle.textContent = '开启手势';
+        }
+
+        async function startCamera() {
+            if (starting || cameraOn) return;
+            if (!window.isSecureContext || !navigator.mediaDevices) {
+                const message = cameraError({ name: 'SecurityError' });
+                status.textContent = liveStatus.textContent = message;
+                return;
+            }
+            if (typeof Hands !== 'function' || typeof Camera !== 'function') {
+                status.textContent = liveStatus.textContent = '手势资源尚未就绪，请检查网络，稍后重试。也可以先看星光。';
+                return;
+            }
+            const attempt = ++cameraAttempt;
+            starting = true;
+            startButton.disabled = cameraToggle.disabled = true;
+            startButton.textContent = '正在开启…';
+            status.textContent = liveStatus.textContent = '请允许摄像头访问，正在准备手势识别…';
+            let ownedCamera;
+            let ownedHands;
+            try {
+                ownedHands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}` });
+                ownedHands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.65, minTrackingConfidence: 0.65 });
+                ownedHands.onResults(results => { if (cameraOn && attempt === cameraAttempt) onHandResults(results); });
+                hands = ownedHands;
+                ownedCamera = new Camera(video, {
+                    onFrame: async () => {
+                        if (!cameraOn || attempt !== cameraAttempt || document.hidden) return;
+                        try { await ownedHands.send({ image: video }); }
+                        catch (error) {
+                            if (attempt !== cameraAttempt) return;
+                            const message = cameraError(error);
+                            await stopCamera();
+                            status.textContent = liveStatus.textContent = message;
+                        }
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                camera = ownedCamera;
+                await ownedCamera.start();
+                if (attempt !== cameraAttempt) { await ownedCamera.stop(); return; }
+                cameraOn = true;
+                starting = false;
+                startButton.disabled = cameraToggle.disabled = false;
+                cameraToggle.textContent = '关闭摄像头';
+                document.body.classList.add('camera-on');
+                showPreview();
+                liveStatus.textContent = '把手放进画面，让星光跟随你';
+                const stream = video.srcObject;
+                if (stream) stream.getVideoTracks().forEach(track => track.addEventListener('ended', async () => {
+                    if (attempt !== cameraAttempt) return;
+                    await stopCamera();
+                    liveStatus.textContent = '摄像头已断开，可重新开启';
+                }, { once: true }));
+            } catch (error) {
+                if (attempt !== cameraAttempt) return;
+                await stopCamera();
+                status.textContent = liveStatus.textContent = cameraError(error);
+            }
+        }
+
+        startButton.addEventListener('click', startCamera);
+        document.getElementById('preview').addEventListener('click', showPreview);
+        cameraToggle.addEventListener('click', async () => {
+            if (cameraOn) { await stopCamera(); liveStatus.textContent = '摄像头已关闭，星光仍在'; }
+            else startCamera();
         });
-
-        // 记录上一帧食指位置计算速度
-        let lastIndexX = 0, lastIndexY = 0;
-
-        hands.onResults(results => {
-            // 即使没有手也需要绘制背景动画
-            animate();
-
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                
-                // 关键点
-                const wrist = landmarks[0];
-                const indexTip = landmarks[8];
-                const middleTip = landmarks[12];
-                const ringTip = landmarks[16];
-                const pinkyTip = landmarks[20];
-                const indexBase = landmarks[5];
-
-                // 坐标映射
-                const ix = (1 - indexTip.x) * width;
-                const iy = indexTip.y * height;
-
-                // 计算手指速度 (用于喷射力度)
-                const speed = Math.hypot(ix - lastIndexX, iy - lastIndexY);
-                lastIndexX = ix; lastIndexY = iy;
-
-                // 1. 食指伸出检测 (指尖距离手腕 远大于 指根距离手腕)
-                const dTip = Math.hypot(indexTip.x - wrist.x, indexTip.y - wrist.y);
-                const dBase = Math.hypot(indexBase.x - wrist.x, indexBase.y - wrist.y);
-                const isIndexExtended = dTip > dBase * 1.5;
-
-                // 2. ✌️ 胜利手势检测 (食指+中指伸出，其他弯曲)
-                const dMiddle = Math.hypot(middleTip.x - wrist.x, middleTip.y - wrist.y);
-                const dRing = Math.hypot(ringTip.x - wrist.x, ringTip.y - wrist.y);
-                const isVictory = isIndexExtended && (dMiddle > dBase * 1.3) && (dRing < dBase * 1.2);
-
-                // 3. 🖐️ 张手检测 (五个手指都伸直)
-                const isOpenHand = (dTip > 0.4 && dMiddle > 0.4 && dRing > 0.35);
-
-                // --- 触发逻辑 ---
-
-                if (isVictory) {
-                    colorMode = 'disco';
-                } else {
-                    colorMode = 'normal';
-                }
-
-                if (isOpenHand) {
-                    targetShape = 'sphere';
-                } else if (!isOpenHand && !isVictory) { // 握拳或其他
-                    targetShape = 'tree';
-                }
-
-                // 火花逻辑：只要伸出食指，或者 V手势
-                if (isIndexExtended) {
-                    const count = Math.min(5, Math.ceil(speed / 2) + 1); // 动得越快，火花越多
-                    for(let k=0; k<count; k++) {
-                        // 随机向四周喷射
-                        const angle = Math.random() * Math.PI * 2;
-                        const vel = Math.random() * 5 + 2;
-                        sparks.push(new Spark(
-                            ix, iy, 
-                            Math.cos(angle) * vel + (ix - lastIndexX)*0.2, // 继承一点惯性
-                            Math.sin(angle) * vel
-                        ));
-                    }
-                }
+        ['hands-lib', 'camera-lib'].forEach(id => document.getElementById(id).addEventListener('error', () => {
+            status.textContent = '手势资源加载失败，请检查网络后刷新；仍可先看星光。';
+        }));
+        window.addEventListener('resize', init);
+        document.addEventListener('visibilitychange', () => {
+            cancelAnimationFrame(animationId);
+            if (!document.hidden) { previousFrame = 0; animationId = requestAnimationFrame(animate); }
+        });
+        window.addEventListener('pagehide', () => { cancelAnimationFrame(animationId); stopCamera(); });
+        window.addEventListener('pageshow', event => {
+            if (event.persisted) {
+                cancelAnimationFrame(animationId);
+                previousFrame = 0;
+                if (!document.hidden) animationId = requestAnimationFrame(animate);
             }
         });
-
-        // 启动摄像头
-        const video = document.getElementById('input-video');
-        const camera = new Camera(video, {
-            onFrame: async () => {
-                await hands.send({image: video});
-            },
-            width: 1280,
-            height: 720
-        });
-
-        camera.start().then(() => {
-            loading.style.display = 'none';
-            init();
-        });
-
-        window.addEventListener('resize', init);
+        init();
+        animationId = requestAnimationFrame(animate);
     </script>
 </body>
 </html>
